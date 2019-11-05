@@ -7,6 +7,9 @@ var SHEET_PLAYERS = 'Players';
 var SHEET_BRACKET = 'Bracket';
 var CONNECTOR_WIDTH = 15;
 
+// large spreadsheets
+
+
 /**
  * This method adds a custom menu item to run the script
  */
@@ -28,9 +31,10 @@ var jsonTypesAsStrings = [];
 var jsonArrayTypesAsStrings = [];
 var arraySeparator = ",";
 var emptyLinesAllowed = true;
-var directionIsHorizontal = true;
 var tempSheetIdentifierPreamble = "__.TEMP_JSON_SHEET.__";
 var tempSheetIdentifierPostamble = "__.LOCATION.__";
+var compressedObjPreamble = ":__JSON_OBJ__:";
+var isRootObjectArray = true;
 
 for (var i = 0; i < jsonBasicTypes.length; i++)
 {
@@ -73,7 +77,7 @@ function deleteTempSheets()
 	{
 		var candidate = sheets[i];
 
-		var index = candidate.getSheetId().indexOf(tempSheetIdentifierPreamble);
+		var index = ("" + candidate.getName()).indexOf(tempSheetIdentifierPreamble);
 
 		if (index > -1)
 		{
@@ -95,28 +99,48 @@ function serializeSheet(sheet)
 	var obj = {};
 	obj["cels"] = {};
 
+
+
 	var totalRows = sheet.getLastRow();
 	var totalCols = sheet.getLastColumn();
 
 	var values = sheet.getSheetValues(1, 1, totalRows, totalCols);
 
+	var range = sheet.getDataRange();
+	var formulas = range.getFormulas();
+	var bgs = range.getBackgrounds();
+
 	obj["cels"]["totalRows"] = totalRows;
 	obj["cels"]["totalCols"] = totalCols;
 	obj["cels"]["values"] = [];
+	obj["cels"]["formulas"] = [];
+	obj["cels"]["bgs"] = [];
+	obj["cels"]["fcs"] = [];
 
 	for (var i = 0; i < totalRows; i++)
 	{
 		for (var j = 0; j < totalCols; j++)
 		{
 			obj["cels"]["values"].push(values[i][j]);
+			obj["cels"]["formulas"].push(formulas[i][j]);
+
+			obj["cels"]["bgs"].push(bgs[i][j]);
 		}
 	}
 
 	obj["json"] = "";
 
 	var str = JSON.stringify(obj);
-	return str;
+
+	var blob = Utilities.newBlob(str, 'application/octet-stream');
+
+	var compressedBlob = Utilities.zip([blob]);
+
+	var encoded = compressedObjPreamble + Utilities.base64Encode(compressedBlob.getBytes());
+	return encoded;
 }
+
+
 
 function deserializeSheet(sheetName, data)
 {
@@ -151,7 +175,20 @@ function deserializeSheet(sheetName, data)
 
 	if (data != "")
 	{
-		var jsonObject = JSON.parse(data);
+		if (data.indexOf(compressedObjPreamble) > -1)
+		{
+			data = data.replace(compressedObjPreamble, "");
+		}
+
+
+		var decoded = Utilities.base64Decode(data);
+
+		var blob = Utilities.newBlob(decoded, 'application/zip');
+
+		var unzipped = Utilities.unzip(blob);
+
+		var jsonObject = JSON.parse(unzipped[0].getAs('application/octet-stream').getDataAsString());
+
 
 		if (jsonObject != null && jsonObject["cels"] != null)
 		{
@@ -159,6 +196,8 @@ function deserializeSheet(sheetName, data)
 			var totalCols = jsonObject["cels"]["totalCols"];
 
 			var values = jsonObject["cels"]["values"];
+			var formulas = jsonObject["cels"]["formulas"];
+			var bgs = jsonObject["cels"]["bgs"];
 
 			for (var i = 0; i < values.length; i++)
 			{
@@ -166,13 +205,36 @@ function deserializeSheet(sheetName, data)
 				var col = i % totalCols;
 
 				//SpreadsheetApp.getActiveSheet().getRange('F2').setValue('Hello');
-				newSheet.getRange(row + 1, col + 1).setValue(values[i]);
+
+				var range = newSheet.getRange(row + 1, col + 1);
+
+				if (formulas != null && formulas[i] != "")
+				{
+					range.setFormula(formulas[i]);
+
+				}
+				else
+				{
+					var valueToInsert = "" + values[i];
+
+					range.setValue(valueToInsert);
+
+					if (valueToInsert.indexOf(compressedObjPreamble) > -1)
+					{
+						range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+					}
+				}
+
+				if (bgs != null)
+				{
+					range.setBackground(bgs[i]);
+				}
 			}
 		}
 
 	}
 
-	Browser.msgBox('Data', 'Deserialization with ' + data, Browser.Buttons.OK);
+	//Browser.msgBox('Data', 'Deserialization with ' + data, Browser.Buttons.OK);
 
 	return newSheet;
 
@@ -182,16 +244,30 @@ function deserializeSheet(sheetName, data)
 
 function getSheetById(sheetId)
 {
-	return SpreadsheetApp.getActive().getSheets().filter(
-		function(s)
+	var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+	var sheets = activeSpreadsheet.getSheets();
+
+	var sheetsToDelete = [];
+
+	for (var i = 0; i < sheets.length; i++)
+	{
+		var sheet = sheets[i];
+		if (sheetId == sheet.getSheetId())
 		{
-			return s.getSheetId() === id;
+			return sheet
 		}
-	)[0];
+
+	}
+
+	return null;
 }
 
 function saveTempSheets()
 {
+	//insertLargeJson();
+	//readLargeJson();
+	//return;
+
 	var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 	var sheets = activeSpreadsheet.getSheets();
 
@@ -201,7 +277,7 @@ function saveTempSheets()
 	{
 		var candidate = sheets[i];
 
-		var candidateName = candidate.getSheetId();
+		var candidateName = candidate.getName();
 
 		var index = candidateName.indexOf(tempSheetIdentifierPreamble);
 
@@ -211,6 +287,7 @@ function saveTempSheets()
 
 			if (postEmbleIndex > -1)
 			{
+
 				var parentSheetId = candidateName.substr(tempSheetIdentifierPreamble.length, postEmbleIndex - tempSheetIdentifierPreamble.length);
 				var locationStr = candidateName.substr(postEmbleIndex + tempSheetIdentifierPostamble.length, candidateName.length - postEmbleIndex + tempSheetIdentifierPostamble.length);
 				var cels = locationStr.split(",");
@@ -221,21 +298,57 @@ function saveTempSheets()
 
 				var parentSheet = getSheetById(parentSheetId);
 
-				if (parentSheet != null)
+				while (parentSheet != null)
 				{
+					var range = parentSheet.getRange(parentSheetRow + 1, parentSheetCol + 1);
+					range.setValue(serialization);
+					range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+
+					SpreadsheetApp.flush();
+
+					var parentSheetName = parentSheet.getName();
+
+
+					var newIndex = parentSheetName.indexOf(tempSheetIdentifierPreamble);
+
+					if (newIndex > -1)
+					{
+						var newPostEmbleIndex = parentSheetName.indexOf(tempSheetIdentifierPostamble);
+
+						if (newPostEmbleIndex > -1)
+						{
+							var newParentSheetId = parentSheetName.substr(tempSheetIdentifierPreamble.length, newPostEmbleIndex - tempSheetIdentifierPreamble.length);
+							var newLocationStr = parentSheetName.substr(newPostEmbleIndex + tempSheetIdentifierPostamble.length, parentSheetName.length - newPostEmbleIndex + tempSheetIdentifierPostamble.length);
+							var newCels = newLocationStr.split(",");
+							parentSheetRow = parseInt(newCels[0]);
+							parentSheetCol = parseInt(newCels[1]);
+
+							serialization = serializeSheet(parentSheet);
+
+							parentSheet = getSheetById(newParentSheetId);
+						}
+						else
+						{
+							parentSheet = null;
+						}
+
+					}
+					else
+					{
+						parentSheet = null;
+					}
 
 				}
 
+				sheetsToDelete.push(candidate);
 
-
-				Browser.msgBox('Result', " x" + parentSheet + "x x" + locationStr + "x x" + parentSheetRow + "x x" + parentSheetCol, Browser.Buttons.OK);
-
-				//sheetsToDelete.push(candidate);
 			}
 
 		}
 
 	}
+
+
 
 	for (var i = 0; i < sheetsToDelete.length; i++)
 	{
@@ -244,9 +357,10 @@ function saveTempSheets()
 
 }
 
-function canGoInside(row, col)
+function canGoInside(row, col, sheet, directionIsHorizontal)
 {
-	var result = getValidAndInvalidColumnsWithJsonTypes();
+
+	var result = getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal);
 
 	if (result["validRowsIndices"].length > 0)
 	{
@@ -254,10 +368,6 @@ function canGoInside(row, col)
 		var firstValidCol = result["validColsIndices"][0];
 		var lastValidCol = result["validColsIndices"][result["validColsIndices"].length - 1];
 		var lastValidRow = result["validRowsIndices"][result["validRowsIndices"].length - 1];
-
-		var spreadsheet = SpreadsheetApp.getActive();
-
-		var sheet = spreadsheet.getActiveSheet();
 
 		var totalRows = sheet.getLastRow();
 		var totalCols = sheet.getLastColumn();
@@ -299,30 +409,40 @@ function canGoInside(row, col)
 
 function goInside()
 {
-	detectDirection();
-
 	var activeSheet = SpreadsheetApp.getActiveSheet();
 	var selection = activeSheet.getSelection();
+
+	var directionIsHorizontal = detectDirection(activeSheet);
 
 	var row = selection.getCurrentCell().getRow() - 1;
 	var col = selection.getCurrentCell().getColumn() - 1;
 
-	if (canGoInside(row, col))
+	if (canGoInside(row, col, activeSheet, directionIsHorizontal))
 	{
 		var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 		var sheets = activeSpreadsheet.getSheets();
 
 		var targetName = tempSheetIdentifierPreamble + activeSheet.getSheetId() + tempSheetIdentifierPostamble + row + "," + col;
 
+		var existingSheet = activeSpreadsheet.getSheetByName(targetName);
 
-		var totalRows = activeSheet.getLastRow();
-		var totalCols = activeSheet.getLastColumn();
+		if (existingSheet)
+		{
+			activeSpreadsheet.setActiveSheet(existingSheet);
+		}
+		else
+		{
+			var totalRows = activeSheet.getLastRow();
+			var totalCols = activeSheet.getLastColumn();
 
-		var values = activeSheet.getSheetValues(1, 1, totalRows, totalCols);
+			var values = activeSheet.getSheetValues(1, 1, totalRows, totalCols);
 
-		var value = values[row][col];
+			var value = values[row][col];
 
-		var newSheet = deserializeSheet(targetName, value);
+			var newSheet = deserializeSheet(targetName, value);
+		}
+
+
 
 	}
 	else
@@ -332,11 +452,8 @@ function goInside()
 
 }
 
-function isEmptyRowOrCol(index, useRow)
+function isEmptyRowOrCol(index, useRow, sheet)
 {
-	var spreadsheet = SpreadsheetApp.getActive();
-
-	var sheet = spreadsheet.getActiveSheet();
 	var totalRows = sheet.getLastRow();
 	var totalCols = sheet.getLastColumn();
 
@@ -398,7 +515,7 @@ function isJSONType(givenType)
 	return false;
 }
 
-function detectDirection()
+function detectDirection(sheet)
 {
 	validRowsIndices = [];
 	invalidRowsIndices = [];
@@ -406,9 +523,6 @@ function detectDirection()
 	validColsIndices = [];
 	invalidColsIndices = [];
 
-	var spreadsheet = SpreadsheetApp.getActive();
-
-	var sheet = spreadsheet.getActiveSheet();
 	var totalRows = sheet.getLastRow();
 	var totalCols = sheet.getLastColumn();
 	var values = sheet.getSheetValues(1, 1, sheet.getLastRow(), sheet.getLastColumn());
@@ -462,8 +576,6 @@ function detectDirection()
 					}
 				}
 
-				directionIsHorizontal = typedCelsInSameRow > typedCelsInSameCol;
-
 				return typedCelsInSameRow > typedCelsInSameCol;
 			}
 
@@ -476,11 +588,15 @@ function detectDirection()
 
 function validateSheet()
 {
-	detectDirection();
-
 	//Browser.msgBox('Result', basicType, Browser.Buttons.OK);
 
-	paintValidation();
+	var spreadsheet = SpreadsheetApp.getActive();
+
+	var sheet = spreadsheet.getActiveSheet();
+
+	var directionIsHorizontal = detectDirection(sheet);
+
+	paintValidation(sheet, directionIsHorizontal);
 
 	var htmlOutput = HtmlService
 		.createHtmlOutput('<p>A change of speed, a change of style...</p>')
@@ -493,13 +609,22 @@ function validateSheet()
 
 function exportJSON()
 {
-	detectDirection();
+	var spreadsheet = SpreadsheetApp.getActive();
 
-	var object = createObject();
+	var sheet = spreadsheet.getActiveSheet();
+
+	var directionIsHorizontal = detectDirection(sheet);
+
+	var object = createObject(sheet, sheet.getName(), directionIsHorizontal, true);
+
+	var spreadsheet = SpreadsheetApp.getActive();
+	spreadsheet.setActiveSheet(sheet);
+	/*
 	if (validateSheet())
 	{
 
 	}
+    */
 
 	var str = JSON.stringify(object)
 
@@ -507,9 +632,9 @@ function exportJSON()
 }
 
 
-function paintValidation()
+function paintValidation(sheet, directionIsHorizontal)
 {
-	var result = getValidAndInvalidColumnsWithJsonTypes();
+	var result = getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal);
 
 	if (result["validRowsIndices"].length > 0)
 	{
@@ -518,13 +643,9 @@ function paintValidation()
 		var lastValidCol = result["validColsIndices"][result["validColsIndices"].length - 1];
 		var lastValidRow = result["validRowsIndices"][result["validRowsIndices"].length - 1];
 
-		var lastValidRowAndNonEmptyRowOrCol = getLastValidRowAndNonEmptyRow(emptyLinesAllowed);
+		var lastValidRowAndNonEmptyRowOrCol = getLastValidRowAndNonEmptyRow(emptyLinesAllowed, directionIsHorizontal);
 		var lastValidRowOrCol = lastValidRowAndNonEmptyRowOrCol[directionIsHorizontal ? "lastValidRow" : "lastValidCol"];
 		var lastNonEmptyRowOrCol = lastValidRowAndNonEmptyRowOrCol[directionIsHorizontal ? "lastNonEmptyRow" : "lastNonEmptyCol"];
-
-		var spreadsheet = SpreadsheetApp.getActive();
-
-		var sheet = spreadsheet.getActiveSheet();
 
 		if (directionIsHorizontal)
 		{
@@ -550,11 +671,11 @@ function printObj(obj)
 }
 
 
-function getLastValidRowAndNonEmptyRow(_emptyLinesAllowed)
+function getLastValidRowAndNonEmptyRow(_emptyLinesAllowed, sheet, directionIsHorizontal)
 {
 	var returnObj = {};
 
-	var result = getValidAndInvalidColumnsWithJsonTypes();
+	var result = getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal);
 
 	if (result[(directionIsHorizontal ? "validRowsIndices" : "validColsIndices")].length > 0)
 	{
@@ -565,9 +686,6 @@ function getLastValidRowAndNonEmptyRow(_emptyLinesAllowed)
 		var lastValidRowOrCol = -1;
 		var lastNonEmptyRowOrCol = -1;
 
-		var spreadsheet = SpreadsheetApp.getActive();
-
-		var sheet = spreadsheet.getActiveSheet();
 		var totalRows = sheet.getLastRow();
 		var totalCols = sheet.getLastColumn();
 
@@ -578,7 +696,7 @@ function getLastValidRowAndNonEmptyRow(_emptyLinesAllowed)
 
 			var isEmptyLineOrCol = true;
 
-			for (var j = (directionIsHorizontal ? firstValidCol : firstValidRow); j < (directionIsHorizontal ? lastValidCol : lastValidRow); j++)
+			for (var j = (directionIsHorizontal ? firstValidCol : firstValidRow); j <= (directionIsHorizontal ? lastValidCol : lastValidRow); j++)
 			{
 
 				var entryValue = "" + (directionIsHorizontal ? values[i][j] : values[j][i]);
@@ -586,7 +704,6 @@ function getLastValidRowAndNonEmptyRow(_emptyLinesAllowed)
 				if (entryValue != "")
 				{
 					isEmptyLineOrCol = false;
-
 					break;
 				}
 
@@ -596,6 +713,7 @@ function getLastValidRowAndNonEmptyRow(_emptyLinesAllowed)
 			var testCols = !directionIsHorizontal && (result["invalidColsIndices"].length > 0 && result["invalidColsIndices"][0] == i && result["invalidRowsIndices"][0] == j);
 
 			var shouldEnd = (isEmptyLineOrCol && !_emptyLinesAllowed) || testRows || testCols;
+
 
 			if (!shouldEnd)
 			{
@@ -627,7 +745,21 @@ function getLastValidRowAndNonEmptyRow(_emptyLinesAllowed)
 	}
 }
 
-function parseValueIntoObject(object, entryName, entryBasicType, value)
+function isJsonString(str)
+{
+	try
+	{
+		JSON.parse(str);
+	}
+	catch (e)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+function parseValueIntoObject(object, entryName, entryBasicType, value, sheet, row, col)
 {
 	if (entryBasicType == "(int)" || entryBasicType == "(uint)" || entryBasicType == "(int64)" || entryBasicType == "(uint64)")
 	{
@@ -648,8 +780,42 @@ function parseValueIntoObject(object, entryName, entryBasicType, value)
 	}
 	else if (entryBasicType == "(object)")
 	{
-		var jsonObject = JSON.parse(value);
-		object[entryName] = value;
+
+		if (isJsonString(value))
+		{
+			object[entryName] = value;
+		}
+		else
+		{
+			var targetName = tempSheetIdentifierPreamble + sheet.getSheetId() + tempSheetIdentifierPostamble + row + "," + col;
+
+			var newSheet = deserializeSheet(targetName, value);
+
+			var directionIsHorizontal = detectDirection(newSheet);
+
+			var newObject = createObject(newSheet, entryName, directionIsHorizontal);
+
+			if (newObject)
+			{
+				object[entryName] = newObject;
+
+				var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+				activeSpreadsheet.deleteSheet(newSheet);
+			}
+
+			var spreadsheet = SpreadsheetApp.getActive();
+			spreadsheet.setActiveSheet(sheet);
+
+			// by default all deserialized sheets are treated as arrays, so since here we know it is a single object we must create it from the first entry
+
+			object[entryName] = newObject[entryName][0];
+
+
+			//object[entryName] = value;
+		}
+
+
+
 	}
 	else
 	{
@@ -658,7 +824,7 @@ function parseValueIntoObject(object, entryName, entryBasicType, value)
 
 }
 
-function pushValueIntoArray(array, basicType, value)
+function pushValueIntoArray(array, entryName, basicType, value, sheet, row, col)
 {
 	if (value == null)
 	{
@@ -721,26 +887,54 @@ function pushValueIntoArray(array, basicType, value)
 	else if (basicType == "object")
 	{
 
-		var jsonArray = JSON.parse(value);
-		for (var i = 0; i < jsonArray.length; i++)
+		if (isJsonString(value))
 		{
-			array.push(jsonArray[i]);
+			var jsonObject = JSON.parse(value);
+			for (var i = 0; i < jsonObject.length; i++)
+			{
+				array.push(jsonObject[i]);
+			}
 		}
+		else
+		{
+
+			var targetName = tempSheetIdentifierPreamble + sheet.getSheetId() + tempSheetIdentifierPostamble + row + "," + col;
+
+			var newSheet = deserializeSheet(targetName, value);
+
+			var directionIsHorizontal = detectDirection(newSheet);
+
+			var newObject = createObject(newSheet, entryName, directionIsHorizontal);
+
+			if (newObject)
+			{
+				object[entryName] = newObject;
+
+				var activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+				activeSpreadsheet.deleteSheet(newSheet);
+			}
+
+			var spreadsheet = SpreadsheetApp.getActive();
+			spreadsheet.setActiveSheet(sheet);
+
+			for (var i = 0; i < newObject[entryName].length; i++)
+			{
+				array.push(newObject[entryName][i]);
+			}
+		}
+
 	}
 
 }
 
-function isAllArrays()
+function isAllArrays(sheet, directionIsHorizontal)
 {
 
-	var result = getValidAndInvalidColumnsWithJsonTypes();
+	var result = getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal);
 
 	if (result["validRowsIndices"].length > 0)
 	{
 		object = {}
-		var spreadsheet = SpreadsheetApp.getActive();
-
-		var sheet = spreadsheet.getActiveSheet();
 
 		var totalRows = sheet.getLastRow();
 		var totalCols = sheet.getLastColumn();
@@ -775,9 +969,9 @@ function isAllArrays()
 	return false;
 }
 
-function createObject()
+function createObject(sheet, name, directionIsHorizontal, isRoot)
 {
-	var result = getValidAndInvalidColumnsWithJsonTypes();
+	var result = getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal);
 
 	var emptyLineEndsArray = false;
 
@@ -792,15 +986,12 @@ function createObject()
 		var lastValidCol = result["validColsIndices"][result["validColsIndices"].length - 1];
 		var lastValidRow = result["validRowsIndices"][result["validRowsIndices"].length - 1];
 
-		var lastValidRowAndNonEmptyRow = getLastValidRowAndNonEmptyRow(emptyLinesAllowed);
+		var lastValidRowAndNonEmptyRow = getLastValidRowAndNonEmptyRow(emptyLinesAllowed, sheet, directionIsHorizontal);
 		var lastNonEmptyRow = lastValidRowAndNonEmptyRow["lastNonEmptyRow"];
 		var lastNonEmptyCol = lastValidRowAndNonEmptyRow["lastNonEmptyCol"];
 
-		var spreadsheet = SpreadsheetApp.getActive();
-
-		var sheet = spreadsheet.getActiveSheet();
-
-		object[sheet.getName()] = [];
+		object[name] = isRoot && !isRootObjectArray ?
+		{} : [];
 
 		var totalRows = sheet.getLastRow();
 		var totalCols = sheet.getLastColumn();
@@ -809,7 +1000,7 @@ function createObject()
 
 		var currentObject = null;
 
-		var allArrays = isAllArrays();
+		var allArrays = isAllArrays(sheet, directionIsHorizontal);
 
 		var currentObjectEmptyArrayEntriesFound = []
 
@@ -818,7 +1009,7 @@ function createObject()
 
 		for (var i = start; i <= end; i++)
 		{
-			if (isEmptyRowOrCol(i, directionIsHorizontal) && !allArrays)
+			if (isEmptyRowOrCol(i, directionIsHorizontal, sheet) && !allArrays)
 			{
 
 				continue;
@@ -863,9 +1054,18 @@ function createObject()
 
 			if (newObjectStarting)
 			{
-				currentObject = {};
+				var newObjectToReplace = {};
+				if (currentObject != null && isRoot && !isRootObjectArray)
+				{
+					object[name] = newObjectToReplace;
+				}
+				else
+				{
+					object[name].push(newObjectToReplace);
+				}
+
+				currentObject = newObjectToReplace;
 				currentObjectEmptyArrayEntriesFound = [];
-				object[sheet.getName()].push(currentObject);
 			}
 
 			var start2 = directionIsHorizontal ? firstValidCol : firstValidRow;
@@ -893,7 +1093,7 @@ function createObject()
 
 					if (!isEmpty)
 					{
-						pushValueIntoArray(currentObject[celName], basicType, value);
+						pushValueIntoArray(currentObject[celName], celName, basicType, value, sheet, directionIsHorizontal ? i : j, directionIsHorizontal ? j : i);
 					}
 					else if (allArrays)
 					{
@@ -905,7 +1105,7 @@ function createObject()
 					if (!isEmpty)
 					{
 						//Browser.msgBox('Result', "pushin " + " " + colName + " "  + value , Browser.Buttons.OK); 
-						parseValueIntoObject(currentObject, celName, basicType, value);
+						parseValueIntoObject(currentObject, celName, basicType, value, sheet, directionIsHorizontal ? i : j, directionIsHorizontal ? j : i);
 					}
 				}
 
@@ -916,12 +1116,14 @@ function createObject()
 		}
 	}
 
+
+
 	return object;
 
 }
 
 
-function getValidAndInvalidColumnsWithJsonTypes()
+function getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal)
 {
 	validRowsIndices = [];
 	invalidRowsIndices = [];
@@ -929,9 +1131,6 @@ function getValidAndInvalidColumnsWithJsonTypes()
 	validColsIndices = [];
 	invalidColsIndices = [];
 
-	var spreadsheet = SpreadsheetApp.getActive();
-
-	var sheet = spreadsheet.getActiveSheet();
 	var totalRows = sheet.getLastRow();
 	var totalCols = sheet.getLastColumn();
 	var values = sheet.getSheetValues(1, 1, sheet.getLastRow(), sheet.getLastColumn());
