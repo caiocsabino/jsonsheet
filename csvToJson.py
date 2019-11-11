@@ -8,7 +8,7 @@ import base64
 import json
 import re
 
-jsonBasicTypes = ["string", "bool", "uint", "int", "uint64", "float", "object"]
+jsonBasicTypes = ["string", "bool", "uint", "int", "uint64", "float", "double", "long", "ulong", "object"]
 jsonTypesAsStrings = [];
 jsonArrayTypesAsStrings = []
 arraySeparator = ","
@@ -16,15 +16,20 @@ emptyLinesAllowed = True
 tempSheetIdentifierPreamble = "__.TEMP_JSON_SHEET.__"
 tempSheetIdentifierPostamble = "__.LOCATION.__"
 compressedObjPreamble = ":__JSON_OBJ__:"
-isRootObjectArray = True
+isRootObjectArray = False
 
 class Sheet:
-	def __init__(self, csvString):
+	def __init__(self, csvString, jsonString):
 		self.csvString = csvString
-		self.setupFromCSV()
+		self.jsonString = jsonString
+
+		if csvString != "":
+			self.setupFromCSV()
+
+		if jsonString != "":
+			self.setupFromJson()
 
 	def setupFromCSV(self):
-		# print(self.csvString)
 		rows = self.csvString.splitlines()
 
 		self.totalRows = len(rows)
@@ -44,6 +49,25 @@ class Sheet:
 					self.values[i].append(cols[k])
 				else:
 					self.values[i].append("")
+
+	def setupFromJson(self):
+		jsonObject = json.loads(self.jsonString)
+
+		if (jsonObject != None and "cels" in jsonObject):
+			self.totalRows = jsonObject["cels"]["totalRows"];
+			self.totalCols = jsonObject["cels"]["totalCols"];
+			self.values = []
+
+			values = jsonObject["cels"]["values"];
+			formulas = jsonObject["cels"]["formulas"];
+			bgs = jsonObject["cels"]["bgs"];
+
+			tsvString = ""
+
+			for i in range(0,self.totalRows):
+				self.values.append([])
+				for j in range(0,self.totalCols):
+					self.values[i].append(str(values[i*self.totalCols+j]))
 
 	def getSheetValues(self,startRow, startCol, totalRows, totalCols):
 
@@ -236,10 +260,12 @@ def getLastValidRowAndNonEmptyRow(_emptyLinesAllowed, sheet, directionIsHorizont
 				endJ = lastValidRow
 
 			for j in range(startJ,endJ):	
-				entryValue = "" + (values[i][j]);
+				entryValue = None
 
 				if not directionIsHorizontal:
 					entryValue =  values[j][i]
+				else:
+					entryValue = "" + (values[i][j]);
 
 				if (entryValue != ""):
 					isEmptyLineOrCol = False;
@@ -275,12 +301,12 @@ def isJsonString(str):
 	return True
 
 def parseValueIntoObject(object, entryName, entryBasicType, value, sheet, row, col):
-	if (entryBasicType == "(int)" or entryBasicType == "(uint)" or entryBasicType == "(int64)" or entryBasicType == "(uint64)"):
+	if (entryBasicType == "(int)" or entryBasicType == "(uint)" or entryBasicType == "(int64)" or entryBasicType == "(uint64)"or entryBasicType == "(long)" or entryBasicType == "(ulong)"):
 		object[entryName] = int(value);
-	elif (entryBasicType == "(float)"):
-		object[entryName] = parseFloat(value);
+	elif (entryBasicType == "(float)" or entryBasicType == "(double)"):
+		object[entryName] = float(value);
 	elif (entryBasicType == "(bool)"):
-		valueLower = value.toLowerCase();
+		valueLower = value.lower();
 
 		if valueLower == "1" or valueLower == "true":
 			object[entryName] = True;
@@ -293,22 +319,23 @@ def parseValueIntoObject(object, entryName, entryBasicType, value, sheet, row, c
 		if (isJsonString(value)):
 			object[entryName] = value;
 		else:
-			targetName = tempSheetIdentifierPreamble + sheet.getSheetId() + tempSheetIdentifierPostamble + row + "," + col;
+			# targetName = tempSheetIdentifierPreamble + sheet.getSheetId() + tempSheetIdentifierPostamble + row + "," + col;
 
+			targetName = "TEMPSHEET"
 			newSheet = deserializeSheet(targetName, value);
 
 			directionIsHorizontal = detectDirection(newSheet);
 
-			newObject = createObject(newSheet, entryName, directionIsHorizontal);
+			newObject = createObject(newSheet, entryName, directionIsHorizontal, False);
 
-			if (newObject):
-				object[entryName] = newObject;
+			# if (newObject):
+			# 	object[entryName] = newObject;
 
-				activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-				activeSpreadsheet.deleteSheet(newSheet);
+			# 	activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+			# 	activeSpreadsheet.deleteSheet(newSheet);
 
-			spreadsheet = SpreadsheetApp.getActive();
-			spreadsheet.setActiveSheet(sheet);
+			# spreadsheet = SpreadsheetApp.getActive();
+			# spreadsheet.setActiveSheet(sheet);
 
 			# by default all deserialized sheets are treated as arrays, so since here we know it is a single object we must create it from the first entry
 
@@ -340,10 +367,10 @@ def pushValueIntoArray(array, entryName, basicType, value, sheet, row, col):
 		for i in range(0,len(values)):
 			value = values[i];
 			array.append(int(value));
-	elif (basicType == "float"):
+	elif (basicType == "float" or basicType == "double"):
 		for i in range(0,len(values)):
 			value = values[i];
-			array.append(parseFloat(value));
+			array.append(float(value));
 	elif (basicType == "bool"):
 		for i in range(0,len(values)):
 			value = values[i];
@@ -466,7 +493,7 @@ def deserializeSheet(sheetName, data):
 				if i < totalRows - 1:
 					tsvString = tsvString + "\n"
 
-			newSheet = Sheet(tsvString)
+			newSheet = Sheet("", unzipped)
 
 			return newSheet
 
@@ -486,6 +513,8 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 		firstValidCol = result["validColsIndices"][0];
 		lastValidCol = result["validColsIndices"][len(result["validColsIndices"]) - 1];
 		lastValidRow = result["validRowsIndices"][len(result["validRowsIndices"]) - 1];
+
+		
 
 		lastValidRowAndNonEmptyRow = getLastValidRowAndNonEmptyRow(emptyLinesAllowed, sheet, directionIsHorizontal);
 
@@ -512,12 +541,15 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 
 		currentObjectEmptyArrayEntriesFound = []
 
-		start = firstValidRow + 1
-		end = lastNonEmptyRow
+		start = None
+		end = None
 
 		if not directionIsHorizontal:
 			start = firstValidCol + 1
 			end = lastNonEmptyCol
+		else:
+			start = firstValidRow + 1
+			end = lastNonEmptyRow
 
 		for i in range(start,end+1):
 			if (isEmptyRowOrCol(i, directionIsHorizontal, sheet) and not allArrays):
@@ -589,10 +621,12 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 				end2 = lastValidRow
 
 			for j in range(start2,end2+1):
-				content = values[firstValidRow][j];
+				content = None;
 
 				if not directionIsHorizontal:
 					content = values[j][firstValidCol]
+				else:
+					content = values[firstValidRow][j];
 
 				if (content == ""):
 					continue;
@@ -740,7 +774,7 @@ if not os.path.isfile(tsvFileName):
 f = open(tsvFileName, "r")
 content = f.read()
 
-sheet = Sheet(content)
+sheet = Sheet(content, "")
 
 directionIsHorizontal = detectDirection(sheet);
 
