@@ -13,10 +13,15 @@ jsonTypesAsStrings = [];
 jsonArrayTypesAsStrings = []
 arraySeparator = ","
 emptyLinesAllowed = True
-tempSheetIdentifierPreamble = "__.TEMP_JSON_SHEET.__"
-tempSheetIdentifierPostamble = "__.LOCATION.__"
-compressedObjPreamble = ":__JSON_OBJ__:"
-isRootObjectArray = False
+tempSheetIdentifierPreamble = "_%_";
+tempSheetIdentifierPostamble = "_#_";
+compressedObjPreamble = ":__JSON_OBJ__:";
+isRootObjectArray = True;
+tempSheetHierarchySeparator = ">";
+validationHierarchySeparator = ".";
+errorList = [];
+columnsAsLetters = True;
+allowDefaultValuesWhenEmpty = True;
 
 class Sheet:
 	def __init__(self, csvString, jsonString):
@@ -34,10 +39,10 @@ class Sheet:
 
 		self.totalRows = len(rows)
 		self.totalCols = 1
-		self.values = []
+		self.sheetValues = []
 
 		for i in range(0,self.totalRows):
-			self.values.append([])
+			self.sheetValues.append([])
 
 			cols = rows[i].split("\t")
 
@@ -46,9 +51,19 @@ class Sheet:
 
 			for k in range(0,self.totalCols):
 				if k < len(cols):
-					self.values[i].append(cols[k])
+					self.sheetValues[i].append(cols[k])
 				else:
-					self.values[i].append("")
+					self.sheetValues[i].append("")
+
+		for i in range(0,self.totalRows):
+			diff = self.totalCols - len(self.sheetValues[i])
+			for k in range(0,diff):
+				self.sheetValues[i].append("")
+
+
+
+
+
 
 	def setupFromJson(self):
 		jsonObject = json.loads(self.jsonString)
@@ -56,30 +71,30 @@ class Sheet:
 		if (jsonObject != None and "cels" in jsonObject):
 			self.totalRows = jsonObject["cels"]["totalRows"];
 			self.totalCols = jsonObject["cels"]["totalCols"];
-			self.values = []
+			self.sheetValues = []
 
-			values = jsonObject["cels"]["values"];
+			jsonValues = jsonObject["cels"]["values"];
 			formulas = jsonObject["cels"]["formulas"];
 			bgs = jsonObject["cels"]["bgs"];
 
 			tsvString = ""
 
 			for i in range(0,self.totalRows):
-				self.values.append([])
+				self.sheetValues.append([])
 				for j in range(0,self.totalCols):
-					self.values[i].append(str(values[i*self.totalCols+j]))
+					self.sheetValues[i].append(str(jsonValues[i*self.totalCols+j]))
 
 	def getSheetValues(self,startRow, startCol, totalRows, totalCols):
 
-		values = []
+		tempValues = []
 
 		for i in range(0,totalRows):
-			values.append([])
+			tempValues.append([])
 
 			for j in range(0,totalCols):
-				values[i].append(self.values[startRow-1+i][startCol-1+j])
+				tempValues[i].append(self.sheetValues[startRow-1+i][startCol-1+j])
 
-		return values
+		return tempValues
 
 	def getRange(self, rows, cols):
 		return self.getSheetValues(1,1, rows, cols)
@@ -95,6 +110,12 @@ class Sheet:
 
 	def setFormula(self, row, col, formula):
 		print("NOT IMPLEMENTED formula")
+
+	def setName(self, name):
+		self.name = name
+
+	def getName(self):
+		return self.name
 
 
 for i in range(0,len(jsonBasicTypes)):
@@ -300,18 +321,65 @@ def isJsonString(str):
 		return False
 	return True
 
-def parseValueIntoObject(object, entryName, entryBasicType, value, sheet, row, col):
+def isIntString(s):
+    try:
+        int(s)
+        return True
+    except ValueError:
+        return False
+
+def isFloatString(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+def getColAsLetter(col):
+	if (not columnsAsLetters):
+		return "" + col + 1;
+
+	letters = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"];
+	multiplier = int(col / len(letters));
+
+	if (multiplier > 0):
+		return letters[multiplier] + letters[col % letters.length];
+	else:
+		return letters[col];
+
+def parseValueIntoObject(object, entryName, entryBasicType, value, sheet, row, col, currentSheetName):
 	if (entryBasicType == "(int)" or entryBasicType == "(uint)" or entryBasicType == "(int64)" or entryBasicType == "(uint64)"or entryBasicType == "(long)" or entryBasicType == "(ulong)"):
-		object[entryName] = int(value);
+		if value == "" and allowDefaultValuesWhenEmpty:
+			value = "0"
+
+		if isIntString(value):
+			object[entryName] = int(value);
+		else:
+			errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not an integer: " + value);
+
 	elif (entryBasicType == "(float)" or entryBasicType == "(double)"):
-		object[entryName] = float(value);
+		if value == "" and allowDefaultValuesWhenEmpty:
+			value = "0"
+
+		if isFloatString(value):
+			object[entryName] = float(value);
+		else:
+			errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not a float: " + value);
+
 	elif (entryBasicType == "(bool)"):
+		if value == "" and allowDefaultValuesWhenEmpty:
+			value = "0"
+
 		valueLower = value.lower();
 
-		if valueLower == "1" or valueLower == "true":
-			object[entryName] = True;
+		if valueLower == "1" or valueLower == "0" or valueLower == "true" or valueLower == "false":
+			if valueLower == "1" or valueLower == "true":
+				object[entryName] = True;
+			else:
+				object[entryName] =  False;
 		else:
-			object[entryName] =  False;
+			errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not a boolean: " + value);
+
 	elif (entryBasicType == "(string)"):
 		object[entryName] = value;
 	elif (entryBasicType == "(object)"):
@@ -321,31 +389,34 @@ def parseValueIntoObject(object, entryName, entryBasicType, value, sheet, row, c
 		else:
 			# targetName = tempSheetIdentifierPreamble + sheet.getSheetId() + tempSheetIdentifierPostamble + row + "," + col;
 
-			targetName = "TEMPSHEET"
-			newSheet = deserializeSheet(targetName, value);
+			if compressedObjPreamble in value:
+				targetName = "TEMPSHEET"
+				newSheet = deserializeSheet(targetName, value);
 
-			directionIsHorizontal = detectDirection(newSheet);
+				horizontal = detectDirection(newSheet);
 
-			newObject = createObject(newSheet, entryName, directionIsHorizontal, False);
+				newObject = createObject(newSheet, entryName, horizontal, False, currentSheetName + validationHierarchySeparator + entryName + "(" + str(row + 1) + "," + getColAsLetter(col) + ")");
 
-			# if (newObject):
-			# 	object[entryName] = newObject;
+				# if (newObject):
+				# 	object[entryName] = newObject;
 
-			# 	activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-			# 	activeSpreadsheet.deleteSheet(newSheet);
+				# 	activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+				# 	activeSpreadsheet.deleteSheet(newSheet);
 
-			# spreadsheet = SpreadsheetApp.getActive();
-			# spreadsheet.setActiveSheet(sheet);
+				# spreadsheet = SpreadsheetApp.getActive();
+				# spreadsheet.setActiveSheet(sheet);
 
-			# by default all deserialized sheets are treated as arrays, so since here we know it is a single object we must create it from the first entry
+				# by default all deserialized sheets are treated as arrays, so since here we know it is a single object we must create it from the first entry
 
-			object[entryName] = newObject[entryName][0];
+				object[entryName] = newObject[entryName][0];
 
-			#object[entryName] = value;
+				#object[entryName] = value;
+			else:
+				errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not a sheet nor json object: " + value);
 	else:
 		print("WILL BREAK, unkown type " + entryBasicType);
 
-def pushValueIntoArray(array, entryName, basicType, value, sheet, row, col):
+def pushValueIntoArray(array, entryName, basicType, value, sheet, row, col, currentSheetName):
 	if (value == None):
 		return;
 
@@ -366,20 +437,44 @@ def pushValueIntoArray(array, entryName, basicType, value, sheet, row, col):
 	if (basicType == "int" or basicType == "uint" or basicType == "int64" or basicType == "uint64"):
 		for i in range(0,len(values)):
 			value = values[i];
-			array.append(int(value));
+
+			if value == "" and allowDefaultValuesWhenEmpty:
+				value = "0"
+
+			if isIntString(value):
+				array.append(int(value));
+			else:
+				errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not an int: " + value);
+
 	elif (basicType == "float" or basicType == "double"):
 		for i in range(0,len(values)):
 			value = values[i];
-			array.append(float(value));
+
+			if value == "" and allowDefaultValuesWhenEmpty:
+				value = "0"
+
+			if isFloatString(value):
+				array.append(float(value));
+			else:
+				errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not a float: " + value);
+
 	elif (basicType == "bool"):
 		for i in range(0,len(values)):
 			value = values[i];
+
+			if value == "" and allowDefaultValuesWhenEmpty:
+				value = "0"
+
 			valueLower = value.lower();
 
-			if valueLower == "1" or valueLower == "true":
-				array.append(True);
+			if valueLower == "1" or valueLower == "0" or valueLower == "true" or valueLower == "false":
+				if valueLower == "1" or valueLower == "true":
+					array.append(True);
+				else:
+					array.append(False)
 			else:
-				array.append(False)
+				errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not a boolean: " + value);
+
 	elif (basicType == "string"):
 		for i in range(0,len(values)):
 			value = values[i];
@@ -392,25 +487,29 @@ def pushValueIntoArray(array, entryName, basicType, value, sheet, row, col):
 				array.append(jsonObject[i]);
 		else:
 			# targetName = tempSheetIdentifierPreamble + sheet.getSheetId() + tempSheetIdentifierPostamble + row + "," + col;
-			targetName = "TEMPSHEET"
 
-			newSheet = deserializeSheet(targetName, value);
+			if compressedObjPreamble in value:
+				targetName = "TEMPSHEET"
 
-			directionIsHorizontal = detectDirection(newSheet);
+				newSheet = deserializeSheet(targetName, value);
 
-			newObject = createObject(newSheet, entryName, directionIsHorizontal, False);
+				horizontal = detectDirection(newSheet);
 
-			# if (newObject):
-			# 	object[entryName] = newObject;
+				newObject = createObject(newSheet, entryName, horizontal, False, currentSheetName + validationHierarchySeparator + entryName + "(" + str(row + 1) + "," + getColAsLetter(col) + ")");
 
-			# 	activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-			# 	activeSpreadsheet.deleteSheet(newSheet);
+				# if (newObject):
+				# 	object[entryName] = newObject;
 
-			# spreadsheet = SpreadsheetApp.getActive();
-			# spreadsheet.setActiveSheet(sheet);
+				# 	activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+				# 	activeSpreadsheet.deleteSheet(newSheet);
 
-			for i in range(0,len(newObject[entryName])):
-				array.append(newObject[entryName][i]);
+				# spreadsheet = SpreadsheetApp.getActive();
+				# spreadsheet.setActiveSheet(sheet);
+
+				for i in range(0,len(newObject[entryName])):
+					array.append(newObject[entryName][i]);
+			else:
+				errorList.append("Error:" + currentSheetName + " Row: " + str(row + 1) + " Col: " + getColAsLetter(col) + "; Value is not a sheet nor json object: " + value);
 
 def isAllArrays(sheet, directionIsHorizontal):
 	result = getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal);
@@ -499,8 +598,35 @@ def deserializeSheet(sheetName, data):
 
 	return None;
 
-def createObject(sheet, name, directionIsHorizontal, isRoot):
+def showErrors():
+	if (len(errorList) == 0):
+		print('No errors found');
+	else:
+		errorStr = "";
+		for i in range(0,len(errorList)):
+			print(errorList[i])
+
+def validateSheet(sheet, sheetName):
+
+	directionIsHorizontal = detectDirection(sheet);
+
+	errorList = [];
+
+	object = createObject(sheet, sheetName, directionIsHorizontal, true, sheetName);
+
+	showErrors()
+
+def isInvalidCel(invalidRowsList, invalidColsList, row, col):
+	for i in range(0,len(invalidRowsList)):
+		if invalidRowsList[i] == row and invalidColsList[i] == col:
+			return True
+	return False
+
+
+def createObject(sheet, name, directionIsHorizontal, isRoot, currentSheetName):
 	result = getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal);
+
+	checkForDuplicateEntries(sheet, directionIsHorizontal, currentSheetName)
 
 	emptyLineEndsArray = False;
 
@@ -570,12 +696,18 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 					end2 = lastValidRow
 
 				for j in range(start2,end2):
-					content = values[firstValidRow][j];
+					copy = values
+					content = None
 
 					if not directionIsHorizontal:
 						content = values[j][firstValidCol];
+					else:
+						content = values[firstValidRow][j];
 
 					if (content == ""):
+						continue;
+
+					if (directionIsHorizontal and isInvalidCel(result["invalidRowsIndices"], result["invalidColsIndices"],firstValidRow, j)) or (not directionIsHorizontal and isInvalidCel(result["invalidRowsIndices"], result["invalidColsIndices"],j, firstValidCol)):
 						continue;
 
 					celTypeAndName = getCelTypeAndName(content);
@@ -583,10 +715,12 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 					celName = celTypeAndName["name"];
 					isArray = isArrayType(celType);
 					basicType = celType;
-					value = values[i][j];
+					value = None;
 
 					if not directionIsHorizontal:
 						value = values[j][i]
+					else:
+						value = values[i][j];
 
 					isEmpty = value == "";
 					objStr = json.dumps(currentObject);
@@ -631,6 +765,9 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 				if (content == ""):
 					continue;
 
+				if (directionIsHorizontal and isInvalidCel(result["invalidRowsIndices"], result["invalidColsIndices"],firstValidRow, j)) or (not directionIsHorizontal and isInvalidCel(result["invalidRowsIndices"], result["invalidColsIndices"],j, firstValidCol)):
+					continue;
+
 				celTypeAndName = getCelTypeAndName(content);
 				celType = celTypeAndName["type"];
 				celName = celTypeAndName["name"];
@@ -659,7 +796,7 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 							rowToPush = j
 							colToPush = i
 
-						pushValueIntoArray(currentObject[celName], celName, basicType, value, sheet, rowToPush, colToPush);
+						pushValueIntoArray(currentObject[celName], celName, basicType, value, sheet, rowToPush, colToPush, currentSheetName);
 					elif (allArrays):
 						currentObjectEmptyArrayEntriesFound.append(j);
 				else:
@@ -673,10 +810,9 @@ def createObject(sheet, name, directionIsHorizontal, isRoot):
 							rowToPush = j
 							colToPush = i
 
-						parseValueIntoObject(currentObject, celName, basicType, value, sheet, rowToPush, colToPush);
+						parseValueIntoObject(currentObject, celName, basicType, value, sheet, rowToPush, colToPush, currentSheetName);
 
 				#Browser.msgBox('Result', colTypeAndName["type"] + " " + values[firstValidRow][j], Browser.Buttons.OK);
-
 
 	return object;
 
@@ -715,14 +851,16 @@ def getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal):
 			else:
 				entryValue = entryValue + values[j][i];
 
-			entryValue = entryValue.lower();
+			entryValueLower = entryValue.lower();
 
-			if (isJSONType(entryValue)):
+			if (isJSONType(entryValueLower)):
+				entryName = getCelTypeAndName(entryValue)["name"];
+
 				if (lineOrColIndexWithFirstJsonType == -1):
 					lineOrColIndexWithFirstJsonType = i;
 
-				if (lineOrColIndexWithFirstJsonType == i and not entryValue in knownTypes):
-					knownTypes.append(entryValue);
+				if (lineOrColIndexWithFirstJsonType == i and not entryName in knownTypes):
+					knownTypes.append(entryName);
 
 					rowToPush = i
 					colToPush = j
@@ -764,6 +902,81 @@ def getValidAndInvalidColumnsWithJsonTypes(sheet, directionIsHorizontal):
 
 	return returnObj;
 
+def checkForDuplicateEntries(sheet, directionIsHorizontal, currentSheetName):
+	totalRows = sheet.getLastRow();
+	totalCols = sheet.getLastColumn();
+	values = sheet.getSheetValues(1, 1, sheet.getLastRow(), sheet.getLastColumn());
+	lineOrColIndexWithFirstJsonType = -1;
+
+	knownTypes = [];
+
+	end = totalRows
+
+	if not directionIsHorizontal:
+		end = totalCols
+
+	for i in range(0,end):
+
+		end2 = totalCols
+
+		if not directionIsHorizontal:
+			end2 = totalRows
+
+		for j in range(0,end2):
+
+			entryValue = ""
+
+			if directionIsHorizontal:
+				entryValue = entryValue + values[i][j];
+			else:
+				entryValue = entryValue + values[j][i];
+
+			entryValueLower = entryValue.lower();
+
+			if (isJSONType(entryValueLower)):
+				entryName = getCelTypeAndName(entryValue)["name"];
+
+				if (lineOrColIndexWithFirstJsonType == -1):
+					lineOrColIndexWithFirstJsonType = i;
+
+				if (lineOrColIndexWithFirstJsonType == i and not entryName in knownTypes):
+					knownTypes.append(entryName);
+
+				else:
+					if (entryName in knownTypes):
+						warningMessage = "";
+
+						if (directionIsHorizontal):
+							warningMessage = ("Warning: Ignoring " + currentSheetName + " Row: " + str(lineOrColIndexWithFirstJsonType + 1) + " Col: " + getColAsLetter(j) + "; Duplicate entry in same sheet: " + entryValue);
+						else:
+							warningMessage = ("Warning: Ignoring " + currentSheetName + " Row: " + str(j + 1) + " Col: " + getColAsLetter(lineOrColIndexWithFirstJsonType) + "; Duplicate entry in same sheet: " + entryValue);
+
+						if (not warningMessage in errorList):
+							errorList.append(warningMessage);
+					else:
+						warningMessage = "";
+
+						if (directionIsHorizontal):
+							warningMessage = ("Warning: Ignoring " + currentSheetName + " Row: " + str(lineOrColIndexWithFirstJsonType + 1) + " Col: " + getColAsLetter(j) + "; " + content + ". Bad location, type declaratios must be at row: " + str(lineOrColIndexWithFirstJsonType + 1));
+						else:
+							warningMessage = ("Warning: Ignoring " + currentSheetName + " Row: " + str(j + 1) + " Col: " + getColAsLetter(lineOrColIndexWithFirstJsonType) + "; " + content + ". Bad location, type declaratios must be at col: " + getColAsLetter(lineOrColIndexWithFirstJsonType));
+
+						if (not warningMessage in errorList):
+							errorList.append(warningMessage);
+
+
+			elif (entryValue != "" and lineOrColIndexWithFirstJsonType == i):
+				warningMessage = "";
+
+				if (directionIsHorizontal):
+					warningMessage = ("Warning: Ignoring " + currentSheetName + " Row: " + str(lineOrColIndexWithFirstJsonType + 1) + " Col: " + getColAsLetter(j) + "; Invalid type: " + entryValue);
+				else:
+					warningMessage = ("Warning: Ignoring " + currentSheetName + " Row: " + str(j + 1) + " Col: " + getColAsLetter(lineOrColIndexWithFirstJsonType) + "; Invalid type: " + entryValue);
+				
+				if (not warningMessage in errorList):
+					errorList.append(warningMessage);
+
+
 
 tsvFileName = sys.argv[1]
 
@@ -776,11 +989,14 @@ content = f.read()
 
 sheet = Sheet(content, "")
 
-directionIsHorizontal = detectDirection(sheet);
+horizontal = detectDirection(sheet);
 
-object = createObject(sheet, tsvFileName, directionIsHorizontal, True);
+object = createObject(sheet, tsvFileName, horizontal, True, tsvFileName);
+
+showErrors()
 
 str = json.dumps(object)
 
 print(str)
+
 
