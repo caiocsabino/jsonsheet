@@ -980,6 +980,9 @@ def checkForDuplicateEntries(sheet, directionIsHorizontal, currentSheetName):
 
 tsvFileName = sys.argv[1]
 
+if (len(sys.argv) > 1):
+	outputFile = sys.argv[2]
+
 if not os.path.isfile(tsvFileName):
     print('File does not exist.')
     exit(1)
@@ -991,11 +994,24 @@ sheet = Sheet(content, "")
 
 horizontal = detectDirection(sheet);
 
-object = createObject(sheet, tsvFileName, horizontal, True, tsvFileName);
+strippedTSVFileName = tsvFileName.replace(".tsv", "")
+
+index = strippedTSVFileName.rfind("/")
+
+strippedTSVFileName = strippedTSVFileName[index+1:]
+
+object = createObject(sheet, strippedTSVFileName, horizontal, True, strippedTSVFileName);
 
 showErrors()
 
-str = json.dumps(object)
+if (len(sys.argv) > 1):
+	str = json.dumps(object)
+
+	fileOut = open(outputFile, "w")
+
+	fileOut.write(json.dumps(object, sort_keys=False, indent=0, separators=(',', ':')))
+
+	fileOut.close()
 
 print(str)
 
