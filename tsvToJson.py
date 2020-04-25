@@ -280,7 +280,7 @@ def getLastValidRowAndNonEmptyRow(_emptyLinesAllowed, sheet, directionIsHorizont
 				startJ = firstValidRow
 				endJ = lastValidRow
 
-			for j in range(startJ,endJ):	
+			for j in range(startJ,endJ+1):	
 				entryValue = None
 
 				if not directionIsHorizontal:
@@ -983,6 +983,11 @@ tsvFileName = sys.argv[1]
 if (len(sys.argv) > 1):
 	outputFile = sys.argv[2]
 
+doNotIncludeFileNameInObject = True
+
+if (len(sys.argv) > 2):
+	doNotIncludeFileNameInObject = sys.argv[3] == "1"
+
 if not os.path.isfile(tsvFileName):
     print('File does not exist.')
     exit(1)
@@ -1001,6 +1006,9 @@ index = strippedTSVFileName.rfind("/")
 strippedTSVFileName = strippedTSVFileName[index+1:]
 
 object = createObject(sheet, strippedTSVFileName, horizontal, True, strippedTSVFileName);
+
+if doNotIncludeFileNameInObject:
+	object = object[strippedTSVFileName][0]
 
 showErrors()
 
